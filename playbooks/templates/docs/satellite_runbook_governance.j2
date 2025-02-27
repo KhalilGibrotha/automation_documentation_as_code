@@ -1,0 +1,162 @@
+{% import 'macros.j2' as macros %}
+---
+title: |
+  Red Hat Satellite Runbook
+subtitle: {{ SUB_ORGANIZATION_NAME}}
+toc: true
+toc_float: true
+toc_depth: 3
+---
+
+\newpage
+
+# Red Hat Ansible Automation Platform (AAP) Policy & 
+
+---
+
+## Manual Steps for Satellite Capsule Certificate Renewal (Shared Certificates)
+
+This document outlines the manual steps to renew and replace Satellite Capsule certificates. This process utilizes shared certificates for load-balanced Capsule pairs, where each pair behind a load balancer will use the same certificate.
+
+### Pre-requisites:
+
+1.  **Identify Capsule Pairs and Load Balancer FQDNs:** Clearly document the pairings of your Satellite Capsules behind each load balancer and the corresponding Load Balancer Fully Qualified Domain Names (FQDNs). For example:
+    *   Load Balancer FQDN: `core-km-satellite-capsule.ncsecu.local`
+        *   Capsule 1 Hostname: `p1vsatcapapp001.ncsecu.local`
+        *   Capsule 2 Hostname: `p1vsatcapapp002.ncsecu.local`
+    *   Load Balancer FQDN: `dmz-km-satellite-capsule.ncsecu.local`
+        *   Capsule 1 Hostname: `p1vsatcapapp101.ncsecu.local`
+        *   Capsule 2 Hostname: `p1vsatcapapp102.ncsecu.local`
+    *   *(And so on for all your load-balanced capsule pairs)*
+2.  **Venafi Access:** Ensure you can access your Venafi Trust Protection Platform to request and retrieve certificates. (Dev may be a separate platform)
+3.  **Satellite Server Access:** You will need administrative access to your Red Hat Satellite Server.
+4.  **Capsule Server Access:** You need administrative access to your Satellite Capsule servers.
+5.  **Load Balancer Access:** You will need administrative access to your Load Balancer infrastructure to upload and configure certificates.
+6.  **Backup Strategy:** Have a documented backup and rollback plan in case of issues during the certificate replacement process. This should include backing up Capsule configurations and existing certificates.
+7.  **Downtime Window:** Plan a maintenance window, as Capsule services will be restarted during this process, potentially causing temporary interruptions.
+
+### Step-by-Step Manual Certificate Renewal Process:
+
+#### Phase 1: Certificate Request and Retrieval from Venafi (for each Load Balanced Pair)
+
+1.  **Log in to Venafi Trust Protection Platform.**
+2.  **Navigate to Certificate Request Section:** Go to the Venafi section to request new certificates (the exact navigation will depend on your Venafi setup).
+3.  **Initiate Certificate Request:** Start a new certificate request.
+4.  **Certificate Type/Profile:** Select the appropriate Certificate Profile configured for Satellite Capsules in Venafi (e.g., "Satellite Capsule Server Profile").
+5.  **Common Name (CN):** For the first load-balanced Capsule pair (e.g., `core-km-satellite-capsule.ncsecu.local`), enter the Load Balancer FQDN as the Common Name (CN). For example: `core-km-satellite-capsule.ncsecu.local`.
+6.  **Subject Alternative Names (SANs):** In the Subject Alternative Names (SANs) section, add the following:
+    *   The Load Balancer FQDN again: `core-km-satellite-capsule.ncsecu.local`
+    *   The Hostnames of both Capsule Servers in the pair:
+        *   `p1vsatcapapp001.ncsecu.local`
+        *   `p1vsatcapapp002.ncsecu.local`
+7.  **Key Generation:** Choose the key via venafi
+8.  **Submit Request:** Submit the certificate request in Venafi.
+9.  **Retrieve Certificate:** Once the certificate is issued in Venafi, retrieve the certificate package (typically in ZIP format). This package should contain:
+    *   Server Certificate (`.crt` file) - for the Load Balancer FQDN
+    *   Private Key (`.key` file) - for the Load Balancer FQDN
+    *   CA Chain/Bundle (`-chain.pem` or similar) - containing Intermediate and Root CA certificates.
+10. **Repeat for Each Load Balanced Pair:** Repeat steps 3-9 for each of your load-balanced Capsule pairs, using the corresponding Load Balancer FQDN as the CN and including the Load Balancer FQDN and the hostnames of the two Capsules in the SANs for each pair.
+11. **Document Certificate Locations:** Note down the location where you save each certificate package retrieved from Venafi, clearly associating it with the corresponding Load Balancer FQDN.
+
+#### Phase 2: Certificate Deployment and Configuration on Satellite Server
+
+1.  **Create Certificate Directory on Satellite Server:** On your Satellite Server, create a dedicated directory to store the new certificate files. For example: `/root/capsule_certs_{{ date_suffix }}`.
+2.  **Copy Certificate Packages to Satellite Server:** Securely copy each certificate ZIP package retrieved from Venafi to the directory created in the previous step on your Satellite Server.
+3.  **Unzip Certificate Packages:** For each certificate ZIP package, unzip its contents into a separate, uniquely named subdirectory within the certificate directory on the Satellite Server. It's recommended to name the subdirectory using the Load Balancer FQDN to easily identify the certificates. For example, for `core-km-satellite-capsule.ncsecu.local.zip`, create a subdirectory `/root/capsule_certs_{{ date_suffix }}/core-km-satellite-capsule.ncsecu.local` and unzip the contents there.
+4.  **Password Removal Verification (If Applicable, Satellite Server):**
+    *   **Step:** If you removed passwords from private keys, verify the password removal.
+    *   **Validation:**
+        *   Attempt to read each decrypted private key file (`.key`) using a text editor. It should open without prompting for a password.
+        *   You can also use `openssl rsa -in <path_to_decrypted_key.key> -noout -text` command. It should display the key details without asking for a passphrase. If it prompts for a passphrase, the password removal is not successful.
+5.  **Validate Certificates (on Satellite Server):** For each set of unzipped certificate files, use the `katello-certs-check` command on the Satellite Server to validate the certificate, key, and CA chain. For example:
+
+    ```bash
+    katello-certs-check -t capsule -c "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local.crt" -k "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local.key" -b "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local-chain.pem"
+    ```
+    Verify that the `katello-certs-check` command returns successfully (exit code 0) for each certificate set.
+6.  **Generate Capsule Certificates (on Satellite Server):** For each load-balanced pair, use the `capsule-certs-generate` command on the Satellite Server to generate the `certs.tar` file needed for Capsule installation/update. Crucially, use the Load Balancer FQDN for the `--foreman-proxy-fqdn` parameter. For example, for the `core-km-satellite-capsule.ncsecu.local` pair:
+
+    ```bash
+    capsule-certs-generate --foreman-proxy-fqdn "core-km-satellite-capsule.ncsecu.local" --certs-tar "~/core-km-satellite-capsule.ncsecu.local-certs.tar" --server-cert "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local.crt" --server-key "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local.key" --server-ca-cert "{{ cert_base_dir }}/core-km-satellite-capsule.ncsecu.local/core-km-satellite-capsule.ncsecu.local-chain.pem" --certs-update-server
+    ```
+    Validation:
+    Verify that the `satellite-installer` command completes without errors (exit code 0).
+    Carefully review the output of `satellite-installer` for any error messages or warnings during the certificate update process. Pay attention to any failures related to certificate deployment or service restarts.
+    Repeat this `capsule-certs-generate` command for each load-balanced pair, adjusting the `--foreman-proxy-fqdn`, `--certs-tar`, and certificate file paths accordingly.
+7.  **Document `certs.tar` Locations:** Note the location of each generated `*-certs.tar` file on the Satellite Server, associating it with the corresponding Load Balancer FQDN.
+
+#### Phase 3: Certificate Deployment and Capsule Configuration (for each Capsule Server)
+
+1.  **Backup Capsule Configuration (on each Capsule Server):** Before making any changes, backup the current configuration on each Capsule server. This should include:
+    *   `/etc/puppetlabs/code/environments/production/data/common.yaml` (or your custom Hiera data file location)
+    *   `/etc/puppetlabs/puppet/hiera.yaml`
+    *   `/etc/foreman-proxy/settings.d/ansible.yml` (and any other custom Ansible settings files)
+    *   Existing certificates tar file (if any): `/root/<capsule_hostname>-certs.tar` (rename it to `*.tar.backup_{{ date_suffix }}`)
+2.  **Copy `certs.tar` to Capsule Server:**
+    For the first Capsule server in a load-balanced pair (e.g., `p1vsatcapapp001.ncsecu.local` in the core-km pair), securely copy the `certs.tar` file generated in Phase 2 for the corresponding Load Balancer FQDN (e.g., `core-km-satellite-capsule.ncsecu.local-certs.tar`) from the Satellite Server to the `/root/` directory on the Capsule server.
+3.  **Run `satellite-installer` on Capsule Server:**
+    On the first Capsule server, execute the `satellite-installer` command to update the certificates. Use the Load Balancer FQDN as the `--foreman-proxy-fqdn` parameter, and include the Satellite Server FQDN and Load Balancer FQDNs in `--foreman-proxy-trusted-hosts`. You will also need to provide the OAuth key and secret generated during `capsule-certs-generate` in Phase 2 (these will be displayed in the output of that command on the Satellite Server). Example for `p1vsatcapapp001.ncsecu.local` (part of the core-km pair):
+
+    ```bash
+    satellite-installer --scenario capsule --foreman-proxy-foreman-base-url "https://{{ satellite_fqdn }}" --foreman-proxy-trusted-hosts "{{ trusted_hosts_list }}" --foreman-proxy-oauth-key "<OAuth Key from capsule-certs-generate output>" --foreman-proxy-oauth-secret "<OAuth Secret from capsule-certs-generate output>" --enable-foreman-proxy-plugin "{{ foreman_proxy_plugin_execution_tag }},{{ foreman_proxy_plugin_ansible_tag }}" --foreman-proxy-fqdn "core-km-satellite-capsule.ncsecu.local"
+    ```
+    **(Important:** Replace `<OAuth Key>` and `<OAuth Secret>` with the actual values from the `capsule-certs-generate` output for the `core-km-satellite-capsule.ncsecu.local` certificate. Adjust `--foreman-proxy-trusted-hosts` and `--enable-foreman-proxy-plugin` parameters as needed for your environment. Consider using variables for `<OAuth Key>` and `<OAuth Secret>` if you are managing them securely.)
+4.  **Repeat for the Second Capsule in the Pair:** Repeat steps 2-3 for the second Capsule server in the same load-balanced pair (e.g., `p1vsatcapapp002.ncsecu.local`), using the same `*-certs.tar` file (e.g., `core-km-satellite-capsule.ncsecu.local-certs.tar`) and the same `satellite-installer` command (including the same Load Balancer FQDN, trusted hosts, OAuth key/secret). Use the same certificate package for both capsules in a pair.
+5.  **Repeat for All Capsule Pairs:** Repeat steps 1-4 for each load-balanced Capsule pair, using the corresponding `*-certs.tar` file and Load Balancer FQDN for each pair.
+6.  **Restore Custom Configurations (on each Capsule Server):** After successfully running `satellite-installer` on both Capsules in a pair, restore your backed-up custom configuration files (Hiera data, Ansible settings) to their original locations on each Capsule server.
+
+#### Phase 4: Load Balancer Certificate Update
+
+1.  **Log in to your Load Balancer Management Interface.**
+2.  **Locate SSL Certificate Management Section:** Navigate to the section where you manage SSL certificates for your load balancers.
+3.  **Import/Replace Certificate:** For the first load-balanced pair (e.g., `core-km-satellite-capsule.ncsecu.local`), import or replace the existing certificate on the Load Balancer with the Server Certificate (`.crt`), Private Key (`.key`), and CA Chain (`-chain.pem`) files that you retrieved from Venafi for the Load Balancer FQDN (`core-km-satellite-capsule.ncsecu.local`).
+4.  **Configure Load Balancer Listener:** Ensure the Load Balancer listener for `core-km-satellite-capsule.ncsecu.local` is configured to use the newly imported certificate.
+5.  **Repeat for All Load Balancers:** Repeat steps 3-4 for each of your Load Balancers, using the corresponding certificate files retrieved from Venafi for each Load Balancer FQDN.
+
+#### Phase 5: Post-Validation and Testing
+
+1.  **Verify Capsule Service Status:**
+    On each Capsule server, check the status of the `foreman-proxy` and `httpd` services to ensure they are running correctly after the certificate update.
+2.  **Capsule Sync Status Check:** From the Satellite Server, verify each Capsule's synchronization status. Use `hammer` commands or the Satellite Web UI to check that Capsules are syncing successfully.
+    *   **Check "Sync Status":** For each Capsule, verify that the "Sync Status" is "Synced" and the "Last Sync Time" is recent (after the certificate replacement).
+    *   **Hammer CLI:** Use the `hammer capsule info --name <capsule_fqdn>` command for each Capsule. Check the "Sync" status and "Last Sync Time" in the output. Ensure the status is "Synced" and the last sync time is recent.
+    *   **Look for Errors:** Check for any error messages related to Capsule synchronization in both the Web UI and hammer.
+3.  **Client Connectivity Tests:** Perform thorough testing from managed hosts and other clients accessing the Capsules through the Load Balancers. Verify that:
+    *   HTTPS access to Capsule services via the Load Balancer FQDN works without certificate errors.
+    *   Content synchronization, remote execution, and other Capsule functionalities work as expected for managed hosts.
+4.  **Monitor Satellite Logs:** Monitor Satellite Server and Capsule Server logs for any errors or warnings related to certificate changes.
+
+### Rollback Procedure (If Necessary):
+
+Follow your documented rollback plan if any issues are encountered during or after the certificate replacement. This would typically involve:
+
+1.  **Restoring Capsule Configurations:** Restore the backed-up configuration files on each Capsule server.
+2.  **Reverting Certificates on Capsules:** Re-run `satellite-installer` with the backed-up `*-certs.tar` files (if you backed them up) or the previous certificate files.
+3.  **Reverting Certificates on Load Balancers:** Revert the configurations using previous certificates.
+4.  **Restart Capsule Services:** Restart `foreman-proxy` and `httpd` services on Capsules.
+5.  **Verify Functionality:** Thoroughly test Capsule functionality and client connectivity after rollback.
+
+### Important Notes:
+
+*   **Thorough Testing:** Testing is crucial after any certificate change. Ensure all functionalities are verified.
+*   **Communication:** Communicate the planned maintenance window and potential service interruptions to relevant teams and users.
+*   **Security:** Handle private keys securely throughout this process.
+*   **Automation (Future):** While these are manual steps, consider automating this process using Ansible or other automation tools for future renewals to improve efficiency and reduce manual errors.
+
+---
+**Variables Used in this Template (for `group_vars/satellite_server.yaml` or similar):**
+
+*   `date_suffix`:  Dynamically generated date suffix (e.g., `{{ lookup('pipe', 'date +%Y%m%d') }}`)
+*   `cert_base_dir`: Base directory for certificates on the Satellite Server (e.g., `/root/capsule_certs`)
+*   `satellite_fqdn`: Fully Qualified Domain Name of the Satellite Server (e.g., `redhatsatellite.ncsecu.local`)
+*   `trusted_hosts_list`: List of FQDNs for `--foreman-proxy-trusted-hosts` parameter (e.g., `"{{ satellite_fqdn }},core-km-satellite-capsule.ncsecu.local,..."`)
+*   `foreman_proxy_plugin_execution_tag`: Tag for Foreman Proxy Execution Plugin (e.g., `enable_foreman_proxy_plugin_execution`)
+*   `foreman_proxy_plugin_ansible_tag`: Tag for Foreman Proxy Ansible Plugin (e.g., `enable_foreman_proxy_plugin_ansible`)
+
+**Note:**
+
+*   Replace the example FQDNs and hostnames in the document with your actual environment's values.
+*   For managing Load Balancer FQDNs and Capsule Hostnames in a more structured way within your Ansible variables, consider using the `capsule_certificate_definitions` dictionary as discussed previously. You would then need to adapt the Jinja template to loop through this dictionary if you want to generate separate documentation sections for each capsule pair.
+*   Remember to securely manage the OAuth key and secret. Consider using Ansible Vault or AAP Credentials instead of hardcoding them in the template or playbook.
+*   Adjust the `--foreman-proxy-trusted-hosts` and `--enable-foreman-proxy-plugin` parameters in the `satellite-installer` command example to match your specific environment's requirements.
+*   This template assumes the certificate files are named consistently within the unzipped packages as `.crt`, `.key`, and `-chain.pem`. Adjust the file paths in the commands if your filenames are different.

@@ -1,0 +1,17 @@
+---
+# group_vars/satellite_server.yaml
+
+date_suffix: "{{ lookup('pipe', 'date +%Y%m%d') }}"  # Dynamically generated date suffix
+
+cert_base_dir: "/root/capsule_certs"  # Base directory for certificates on the Satellite Server
+
+satellite_fqdn: "" # Fully Qualified Domain Name of the Satellite Server
+
+trusted_hosts_list: >-
+  "{{ satellite_fqdn }},
+   # List of FQDNs for --foreman-proxy-trusted-hosts parameter.
+    #  Include Satellite FQDN and all Load Balancer FQDNs.
+    #  Use >- to define a multi-line string in YAML
+
+foreman_proxy_plugin_execution_tag: "enable_foreman_proxy_plugin_execution" # Tag for Foreman Proxy Execution Plugin
+foreman_proxy_plugin_ansible_tag: "enable_foreman_proxy_plugin_ansible" # Tag for Foreman Proxy Ansible Plugin

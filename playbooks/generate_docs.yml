@@ -9,6 +9,9 @@
     doc_directory: "./files/pandoc_generated/"
     reference: "./files/pandoc_reference/reference.docx"
     templates_list:
+      - { src: "{{ source_directory }}satellite_runbook_governance.j2",
+        dest: "{{ output_directory }}satellite_runbook_governance.md",
+        doc: "{{ doc_directory }}satellite_runbook_governance.docx" }
       - { src: "{{ source_directory }}aap_operations_manual.j2",
         dest: "{{ output_directory }}aap_operations_manual.md",
         doc: "{{ doc_directory }}aap_operations_manual.docx" }
