@@ -2,7 +2,7 @@
 - name: Generate Documentation
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
   vars:
     output_directory: ./files/working_docs/
     source_directory: ./templates/
