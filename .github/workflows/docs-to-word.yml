@@ -3,7 +3,7 @@ name: Docs to Word
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - 'playbooks/templates/**'
       - 'playbooks/generate_docs.yml'
