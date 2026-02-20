@@ -1,0 +1,43 @@
+name: Docs to Word
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'playbooks/templates/**'
+      - 'playbooks/generate_docs.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: pandoc/actions/setup@v1
+        with:
+          version: 3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Run Playbook
+        run: |
+          cd playbooks
+          ansible-playbook generate_docs.yml
+
+      - name: Commit & Push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: update generated word documents [skip ci]"
+          file_pattern: "playbooks/files/pandoc_generated/*.docx"
